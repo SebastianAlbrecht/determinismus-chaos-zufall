@@ -36,8 +36,8 @@ def free_to_interacting(free_trajectories):
     max_right_excess = np.max(free_trajectories) - 1
     max_left_excess = 0 - np.min(free_trajectories)
     
-    max_bounces = max(max_right_excess, max_left_excess)
-    num_bounces = math.floor(max_bounces)
+    max_bounces = max(max_right_excess, max_left_excess) / 2.
+    num_bounces = math.ceil(max_bounces)
         
     # hier ist der größte Zeitfresser (i.e. Code beschleunigen oder verhindern, dass es viele Reflektionen gibt)   
     for i in range(num_bounces):
@@ -67,68 +67,91 @@ def free_to_interacting_circle(free_trajectories):
     for n in range(num_steps):
         interacting_trajectories[n] = np.roll(interacting_trajectories[n,:], shift = shifts[n])
         
-    return interacting_trajectories, shifts
+    return interacting_trajectories #!!! hier muss nur der return value "shifts" entfernt werden
+
+
+def free_to_interacting_no_walls(free_trajectories):
+    interacting_trajectories = np.sort(free_trajectories, axis = -1)
+    return interacting_trajectories
 
 
 
 # ---------- Untersuchung mittlerer Punkt ----------
     
-def rescaling1(interacting_trajectories, time_step):
-    num_steps = interacting_trajectories.shape[0]
-    num_particles = interacting_trajectories.shape[1]
+#!!!
+def distribution_middle_particle_position(start_pos, start_vel, time_step, num_steps, boundary):
     
+    num_reps = start_pos.shape[0]
+    num_particles = start_pos.shape[1]
     middle_index = math.ceil(num_particles / 2)
-    middle_trajectory = interacting_trajectories[:,middle_index]
     
+    middle_trajectories = np.zeros((num_reps, num_steps))
     scale = np.linspace(1, num_steps, endpoint = True, num = num_steps)
     scale = (np.pi / (2 * scale))**(1/4)
     
-    middle_trajectory = scale * middle_trajectory
+    if boundary == "wall":
+        for n in range(num_reps): 
+            free_trajectories = free_propagation(start_pos[n], start_vel[n], time_step, num_steps)
+            middle_trajectories[n,:] = free_to_interacting(free_trajectories)[:,middle_index]
+            middle_trajectories[n,:] = scale * middle_trajectories[n,:]
     
-    return middle_trajectory
+    elif boundary == "periodic":
+        for n in range(num_reps): 
+            free_trajectories = free_propagation(start_pos[n], start_vel[n], time_step, num_steps)
+            middle_trajectories[n,:] = free_to_interacting_circle(free_trajectories)[:,middle_index]
+            middle_trajectories[n,:] = scale * middle_trajectories[n,:]
+        
+    return middle_trajectories
     
 
-def rescaling2_donsker(interacting_trajectories, num_rescale_steps, num_time_steps):
+#!!!
+def donsker_rescaling(interacting_trajectories, num_rescale_steps, num_time_steps):
 
     num_particles = interacting_trajectories.shape[1]
-    middle_index = math.ceil(num_particles / 2)
+    middle_index = math.floor(num_particles / 2.)
     
     middle_trajectory = interacting_trajectories[:,middle_index]
     
     donsker_trajectory = np.zeros((num_rescale_steps,num_time_steps))
 
-
     for n in range(num_rescale_steps): 
         for step in range(num_time_steps): 
             t = step/num_time_steps
-            donsker_trajectory[n,step] = 1./(np.sqrt(n+1)) * middle_trajectory[math.ceil(n*t)]
+            donsker_trajectory[n,step] = 1./(np.sqrt(n+1)) * middle_trajectory[int(n*t)]
+    
     return donsker_trajectory 
 
 
 
 # ---------- Animation Stoßprozesse auf der Geraden ----------
     
-def anim_1D_colliding_particles(start_pos, start_vel, time_step, num_steps, num_frames):
+#!!!
+def anim_1D_colliding_particles(start_pos, start_vel, time_step = 0.1, num_steps = 200, boundary = "wall"):
+    
+    if boundary not in ["wall", "periodic", "free"]: boundary = "wall"
     
     free_trajectories = free_propagation(start_pos, start_vel, time_step, num_steps)
-    interacting_trajectories = free_to_interacting(free_trajectories)
+    if boundary == "wall": interacting_trajectories = free_to_interacting(free_trajectories)
+    elif boundary == "periodic": interacting_trajectories = free_to_interacting_circle(free_trajectories)
+    elif boundary == "free": interacting_trajectories = free_to_interacting_no_walls(free_trajectories)
     
     fig, axes = plt.subplots(1,2, figsize = (11,5))
     fig.subplots_adjust(wspace = 0.4)
         
     anim = animation.FuncAnimation(fig, update_colliding_particles_anim, interval=250, 
-                                   frames = num_frames, 
-                                   fargs = (interacting_trajectories, time_step), 
+                                   frames = num_steps, 
+                                   fargs = (interacting_trajectories, time_step, boundary), 
                                    repeat = False)
    
     return anim
 
 
-def update_colliding_particles_anim(i, interacting_trajectories, time_step):
+#!!!
+def update_colliding_particles_anim(i, interacting_trajectories, time_step, boundary):
     
     num_particles = interacting_trajectories.shape[1]    
     num_steps = interacting_trajectories.shape[0]
-    middle_index = math.ceil(num_particles / 2.)
+    middle_index = math.floor(num_particles / 2.)
     
     color_labels = np.full(shape=num_particles, fill_value=10,dtype=np.int)
     color_labels[middle_index]=0
@@ -141,87 +164,79 @@ def update_colliding_particles_anim(i, interacting_trajectories, time_step):
     [ax1, ax2] = fig.axes
     ax1.clear()
     ax2.clear()
-    ax1.set_xlim((-0.1, 1.1))
-    ax2.set_xlim(( 0.95 * np.min(middle_trajectory), 1.05 * np.max(middle_trajectory)))
-    ax2.set_ylim((- time_step, time_step * (num_steps + 1)))
+    
+    if boundary == "wall":
+        ax1.set_xlim((-0.1, 1.1))
+        ax1.plot([-0.01, 1.01], [1,1], c = "#c4c4c4", marker = "|", zorder = 0)
+        ax1.set_xticks([0, 0.25, 0.5, 0.75, 1])
+        ax1.get_yaxis().set_visible(False)
+        ax1.scatter(interacting_trajectories[i], np.ones_like(interacting_trajectories[i]),
+                    marker = "o", c = color_labels, cmap = "Set1")
+        ax2.set_xlim(( 0.95 * np.min(middle_trajectory), 1.05 * np.max(middle_trajectory)))
+    elif boundary == "periodic":
+        ax1.set_xlim((-1.1,1.1))
+        ax1.set_ylim((-1.1,1.1))
+        ax1.set_aspect("equal")
+        ax1.set_xticks([-1, -0.5, 0, 0.5, 1])
+        ax1.set_yticks([-1, -0.5, 0, 0.5, 1])
+        circle = plt.Circle(((0.,0.)), 1., fill=False, edgecolor='#c4c4c4', zorder = 0)
+        ax1.add_patch(circle)
+        ax1.scatter(np.sin(2*np.pi*interacting_trajectories[i]), np.cos(2*np.pi*interacting_trajectories[i]),
+                    marker = "o", c = color_labels, cmap = "Set1")
+        middle_trajectory = 2 * np.pi * middle_trajectory
+        ax2.set_xticks([0, 0.5*np.pi, np.pi, 1.5*np.pi, 2*np.pi])
+        ax2.set_xticklabels([r"$0$", r"$\frac{1}{2} \pi$", r"$\pi$", r"$\frac{3}{2} \pi$", r"$2 \pi$"])
+        ax2.set_xlim(( np.min(middle_trajectory) - 1 , np.max(middle_trajectory) + 1))
+    elif boundary == "free":
+        x_lim_right = np.max(interacting_trajectories)
+        x_lim_left = np.min(interacting_trajectories)
+        x_lim = max(x_lim_right - 1, x_lim_left)
+        ax1.set_xlim(-1.1*x_lim, 1 + 1.1*x_lim)
+        ax1.plot([-1.1*x_lim, 1 + 1.1*x_lim], [1,1], c = "#c4c4c4", marker = "", zorder = 0)
+        ax1.get_yaxis().set_visible(False)
+        ax1.scatter(interacting_trajectories[i], np.ones_like(interacting_trajectories[i]),
+                    marker = "o", c = color_labels, cmap = "Set1")
+        ax2.set_xlim(( np.min(middle_trajectory) - 0.1, np.max(middle_trajectory) + 0.1))
     
     
-    ax1.scatter(interacting_trajectories[i], np.ones_like(interacting_trajectories[i]),
-               marker = "o", c = color_labels, cmap = "Set1")
-    ax1.plot([-0.02, 1.02], [1,1], c = "#c4c4c4", marker = "|", zorder = 0)
-    ax1.set_xticks([0, 0.25, 0.5, 0.75, 1])
-    ax1.get_yaxis().set_visible(False)
-    
+    ax2.set_ylim((- time_step, time_step * (num_steps + 1)))  
+
     ax2.plot(middle_trajectory[0:i], times, c = "r")
-    ax2.set_xlabel(r"Auslenkung $y_0(t)$ des roten Teilchens")
+    ax2.set_xlabel("Auslenkung des roten Teilchens")
     ax2.set_ylabel(r"$t$")
     
-    return anim
+    return fig
 
 
-
-def anim_1D_colliding_particles_circle(start_pos, start_vel, time_step, num_steps, num_frames):
-    
-    free_trajectories = free_propagation(start_pos, start_vel, time_step, num_steps)
-    interacting_trajectories, shifts = free_to_interacting_circle(free_trajectories)
-    
-    fig, ax= plt.subplots()
-    
-    anim = animation.FuncAnimation(fig, update_colliding_particles_anim_circle, interval=250, 
-                                   frames = num_frames, 
-                                   fargs = (interacting_trajectories, shifts), 
-                                   repeat = False)
-   
-    return anim
+#!!! die Funktionen anim_1D_colliding_particles_circle und update_colliding_particles_anim_circle 
+# habe ich gelöscht, die braucht es jetzt natürlich nicht mehr ;)
 
 
-def update_colliding_particles_anim_circle(i, interacting_trajectories, shifts):
-    
-    num_particles = interacting_trajectories.shape[1]
-    
-    color_labels = np.linspace(0, num_particles, num = num_particles)
-    
-    fig = plt.gcf()
-    ax1 = fig.axes[0]
-    ax1.clear()
-    ax1.set_xlim((-1.1,1.1))
-    ax1.set_ylim((-1.1,1.1))
-    ax1.set_aspect("equal")
-    plt.axis("off")
-    
-    circle = plt.Circle(((0.,0.)), 1., fill=False, edgecolor='#c4c4c4', zorder = 0)
-    ax1.add_patch(circle)
-    
-    ax1.scatter(np.cos(2*np.pi*interacting_trajectories[i]), np.sin(2*np.pi*interacting_trajectories[i]),
-               marker = "o", c = color_labels, cmap = "plasma")
-    
-    return anim
+# ---------- Animation Verteilung Position mittleres Teilchen ----------
 
-
-
-# ---------- Animation Verteilung Rescaling1 ----------
-
-def anim_middle_particle(num_particles, speed, time_step, num_steps, num_reps, num_frames):
+#!!! (hier kommen aber gleich noch weitere Änderungen vermutlich)
+def anim_distribution_middle_particle_pos(num_particles, speed, time_step, num_steps, num_reps, num_frames, 
+                                          boundary = "wall"):
     
-    middle_trajectory_scale1 = []
+    if boundary not in ["wall", "periodic"]: boundary = "wall"
     
-    for n in range(num_reps):
-        start_pos = np.random.random(num_particles)
-        start_pos = np.sort(start_pos)
-        offset = ( start_pos[ math.ceil(num_particles / 2) ] - 0.5 )
-        start_pos -= offset
-        #pos_boundary = (pos_boundary[0] - offset, pos_boundary[1] - offset)
-        # Reflection notwendig!!!
-        
-        start_vel = speed * (np.random.random(num_particles) - 0.5)
-        start_vel[ math.ceil(num_particles / 2) ] = 0
-        
-        free_trajectories = free_propagation(start_pos, start_vel, time_step, num_steps)
-        interacting_trajectories = free_to_interacting(free_trajectories)
-        middle_trajectory_scale1.append( rescaling1(interacting_trajectories, time_step) )
-        
-    distribution_middle_particle_position = np.array( middle_trajectory_scale1 )
-
+    middle_index = math.floor(num_particles / 2.)
+    
+    start_pos = np.random.random_sample((num_reps, num_particles))
+    start_pos = np.sort(start_pos, axis = -1)
+    
+    offset = ( start_pos[:,middle_index] - 0.5 )
+    offset = np.repeat(offset, num_reps).reshape((num_reps, num_particles))
+    start_pos -= offset
+    
+    ones = np.ones_like(start_pos)
+    start_pos = np.abs( start_pos ) # left bounce
+    start_pos = ones - np.abs( ones - start_pos ) # right bounce
+    
+    start_vel = speed * (np.random.random_sample((num_reps, num_particles)) - 0.5)
+    
+    distribution_position = distribution_middle_particle_position(start_pos, start_vel, time_step, num_steps, 
+                                                                  boundary)
     
     fig, ax = plt.subplots()
     
@@ -230,7 +245,7 @@ def anim_middle_particle(num_particles, speed, time_step, num_steps, num_reps, n
 
     anim = animation.FuncAnimation(fig, update_middle_particle_anim, interval=100, 
                                    frames = steps.size, 
-                                   fargs = (distribution_middle_particle_position, steps, num_particles), 
+                                   fargs = (distribution_position, steps, num_particles), 
                                    repeat = False)
    
     return anim
@@ -255,21 +270,19 @@ def update_middle_particle_anim(i, distribution_middle_particle_position, steps,
 
 # ---------- Animation Verteilung Rescaling2/Donsker ----------
 
-def anim_middle_particle_donsker(start_pos, start_vel, time_step, num_steps, num_frames, 
-                                 anim_num_time_steps, scaling_steps):
+def anim_middle_particle_donsker(start_pos, start_vel, time_step, num_steps, num_frames = None):
+    
+    if num_frames == None: num_frames = num_steps
     
     free_trajectories = free_propagation(start_pos, start_vel, time_step, num_steps)
-    print("Free Trajectories done")
     interacting_trajectories = free_to_interacting(free_trajectories)
-    print("Interacting Trajectories done")
-    middle_trajectory_donsker = rescaling2_donsker(interacting_trajectories, scaling_steps, anim_num_time_steps)
-    print("Rescaling done")
+    middle_trajectory_donsker = donsker_rescaling(interacting_trajectories, num_frames, num_frames)
     
     fig, ax = plt.subplots()
     
-    anim = animation.FuncAnimation(fig, update_middle_particle_donsker_anim, interval=100, 
+    anim = animation.FuncAnimation(fig, update_middle_particle_donsker_anim, interval=10, 
                                    frames = num_frames, 
-                                   fargs = (middle_trajectory_donsker, anim_num_time_steps), 
+                                   fargs = (middle_trajectory_donsker, num_frames), 
                                    repeat = False)
    
     return anim
@@ -281,39 +294,38 @@ def update_middle_particle_donsker_anim(i, middle_trajectory_donsker, anim_num_t
     
     fig = plt.gcf()
     ax = fig.axes[0]
-    
-    x = np.linspace(0,1,anim_num_time_steps)
-    y = middle_trajectory_donsker[i]
-    ax.set_ylim(np.min(y)-0.5, np.max(y)+0.5)
-    ax.set_title(r"$Y_A$ für A = " + str(i))
     ax.clear()
-    ax.plot(x,y)
     
-    return 
+    times = np.linspace(0,1,anim_num_time_steps)
+    rescaled_middle_trajectory = middle_trajectory_donsker[i] - middle_trajectory_donsker[i,0]
+    x_lim_right = max(rescaled_middle_trajectory)
+    x_lim_left = min(rescaled_middle_trajectory)
+    x_lim = max(- x_lim_left, x_lim_right)
+    ax.set_xlim(- 1.05 * x_lim, 1.05* x_lim)
+    ax.set_title(r"$Y_A$ für A = " + str(i))
+    ax.plot(rescaled_middle_trajectory, times)
+    
+    return fig
       
 
 # ---------- Hauptprogramm ----------
 
-num_particles = 10
+num_particles = 100
 num_steps = 200  
 time_step = 0.1
 num_frames = 200
-speed = 0.3
+speed = 1
 
 start_pos = np.random.random(num_particles)
 start_vel = speed * (np.random.random(num_particles) - 0.5)
 
-
-free_trajectories = free_propagation(start_pos, start_vel, time_step, num_steps)
-interacting_trajectories, shifts = free_to_interacting_circle(free_trajectories)
-
-#anim = anim_middle_particle_donsker(start_pos, start_vel, time_step, num_steps, 100, 100, 100)
+#anim = anim_middle_particle_donsker(start_pos, start_vel, time_step, num_steps)
 #anim = anim_middle_particle(num_particles, speed, time_step, num_steps = 2000, num_reps = 500,
 #                            num_frames = 100)
 
-anim = anim_1D_colliding_particles(start_pos, start_vel, time_step, num_steps, num_frames)
+#anim = anim_1D_colliding_particles(start_pos, start_vel, boundary = "free")
 
-writermp4 = animation.FFMpegWriter() 
+writermp4 = animation.FFMpegWriter(fps = 25) 
 #anim.save("name.mp4", writer=writermp4)
 
 plt.show()
